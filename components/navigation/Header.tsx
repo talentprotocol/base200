@@ -51,7 +51,7 @@ export function Header() {
 
   return (
     <>
-      <header className="sticky top-0 z-30 w-full border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <header className="sticky top-0 z-30 w-full border-b border-border bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="w-full flex items-center h-14">
           {/* Left: Back button or title */}
           <div className="flex-1 flex items-center md:justify-end">
@@ -72,12 +72,12 @@ export function Header() {
               ) : (
                 <button
                   onClick={handleTitleClick}
-                  className="h-9 w-24 cursor-pointer relative"
+                  className="h-9 w-32 cursor-pointer relative"
                   aria-label="Go to home"
                 >
                   <Image
-                    src="/cs-logo-header.svg"
-                    alt="Creator Score"
+                    src="/logos/talent_scg_long.svg"
+                    alt="Talent SCG"
                     priority
                     fetchPriority="high"
                     fill
@@ -151,10 +151,10 @@ export function Header() {
             }
           `}</style>
 
-          {/* Right: Settings */}
-          <div className="flex-1 flex items-center justify-end">
-            <div className="px-4 md:max-w-xl md:w-full md:mx-auto md:flex md:justify-end">
-              <Link
+                {/* Right: Settings */}
+                <div className="flex-1 flex items-center justify-end">
+                  <div className="px-4 md:max-w-xl md:w-full md:mx-auto md:flex md:justify-end md:items-center md:gap-2">
+                    <Link
                 href={settingsItem.href}
                 onClick={(e) => handleNavClick(settingsItem, e)}
                 className="flex items-center justify-center h-10 w-10 -mr-2 group transition-colors"
