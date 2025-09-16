@@ -52,6 +52,18 @@ function LeaderboardContent() {
 
   const isLoggedIn = !!(user || unifiedName);
 
+  // Debug logging for pinned user
+  useEffect(() => {
+    console.log("🔍 Leaderboard Debug:", {
+      isLoggedIn,
+      userTalentUuid,
+      pinnedUser,
+      profiles: profiles.length,
+      loading,
+      error,
+    });
+  }, [isLoggedIn, userTalentUuid, pinnedUser, profiles.length, loading, error]);
+
   return (
     <PageContainer>
       {/* Header section */}

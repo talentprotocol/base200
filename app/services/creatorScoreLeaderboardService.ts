@@ -201,6 +201,7 @@ export async function getCreatorScoreLeaderboard(
 export async function getUserProfileData(
   talentUuid: string,
 ): Promise<CreatorProfile | null> {
+  console.log("🔍 getUserProfileData: Starting for talentUuid:", talentUuid);
   const apiKey = process.env.TALENT_API_KEY;
   if (!apiKey) {
     throw new Error("Missing Talent API key");
@@ -213,6 +214,10 @@ export async function getUserProfileData(
     });
 
     if (!profileResponse.ok) {
+      console.log(
+        "🔍 getUserProfileData: Profile response not ok:",
+        profileResponse.status,
+      );
       return null;
     }
 
@@ -220,8 +225,15 @@ export async function getUserProfileData(
     const profile = profileData.profile;
 
     if (!profile) {
+      console.log("🔍 getUserProfileData: No profile found in response");
       return null;
     }
+
+    console.log("🔍 getUserProfileData: Profile found:", {
+      id: profile.id,
+      display_name: profile.display_name,
+      scores: profile.scores?.length || 0,
+    });
 
     // Get total earnings using data_points endpoint
     let totalEarnings: number | undefined;
@@ -256,7 +268,7 @@ export async function getUserProfileData(
       : [];
     const score = creatorScores.length > 0 ? Math.max(...creatorScores) : 0;
 
-    return {
+    const result = {
       id: profile.id,
       display_name: profile.display_name,
       image_url: profile.image_url,
@@ -264,6 +276,9 @@ export async function getUserProfileData(
       rank: profile.rank, // Use rank from profile if available
       total_earnings: totalEarnings,
     };
+
+    console.log("🔍 getUserProfileData: Returning result:", result);
+    return result;
   } catch (error) {
     console.error(`Error fetching user profile data for ${talentUuid}:`, error);
     return null;

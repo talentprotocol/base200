@@ -18,7 +18,6 @@ import { CreatorList } from "@/components/common/CreatorList";
 import { MyRewards } from "@/components/leaderboard/MyRewards";
 import { StatCard } from "@/components/common/StatCard";
 
-import { FarcasterAccessModal } from "@/components/modals/FarcasterAccessModal";
 import {
   ACTIVE_SPONSORS,
   TOTAL_SPONSORS_POOL,
@@ -28,8 +27,7 @@ import {
 
 import { Section } from "@/components/common/Section";
 import { PageContainer } from "@/components/common/PageContainer";
-import { CalloutCarousel } from "@/components/common/CalloutCarousel";
-import { Award, HandCoins } from "lucide-react";
+import { HandCoins, HandHeart } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import * as React from "react";
@@ -37,7 +35,6 @@ import { useRouter } from "next/navigation";
 
 import { PerkModal } from "@/components/modals/PerkModal";
 import { usePerkEntry } from "@/hooks/usePerkEntry";
-import { useUserCalloutPrefs } from "@/hooks/useUserCalloutPrefs";
 
 // Token balance not needed for read-only rewards page
 
@@ -54,8 +51,6 @@ function RewardsContent() {
   const [perkOpen, setPerkOpen] = useState(false);
   const searchParams = useSearchParams();
   const { talentUuid: userTalentUuid } = useFidToTalentUuid();
-
-  const [loginModalOpen, setLoginModalOpen] = useState(false);
 
   // Use optimized leaderboard hook for all data
   const {
@@ -95,12 +90,6 @@ function RewardsContent() {
   // Token balance not needed for read-only rewards page
 
   // Rewards page is read-only - no need for decision logic
-
-  // Server-persisted callout preferences
-  const {
-    permanentlyHiddenIds: permanentlyHiddenCalloutIds,
-    addPermanentlyHiddenId,
-  } = useUserCalloutPrefs(userTalentUuid ?? null);
 
   // Countdown not needed for read-only rewards page
 
@@ -150,55 +139,10 @@ function RewardsContent() {
             isLoading={loadingStats || (top200Loading && !userTop200Entry)}
             rank={userTop200Entry?.rank}
             onInfoClick={undefined}
-            talentUuid={userTalentUuid}
+            isOptedOut={userTop200Entry?.isOptedOut}
+            isOptedIn={userTop200Entry?.isOptedIn}
           />
         )}
-
-        {/* Callout Carousel (below MyRewards) - visible to all users */}
-        <div className="mt-4 mb-2">
-          <CalloutCarousel
-            permanentlyHiddenIds={permanentlyHiddenCalloutIds}
-            onPersistPermanentHide={(id) => addPermanentlyHiddenId(id)}
-            items={(() => {
-              const items = [] as Array<{
-                id: string;
-                variant:
-                  | "brand-purple"
-                  | "brand-green"
-                  | "brand-blue"
-                  | "brand-pink"
-                  | "muted";
-                icon?: React.ReactNode;
-                title: React.ReactNode;
-                description?: React.ReactNode;
-                href?: string;
-                external?: boolean;
-                onClick?: () => void;
-                permanentHideKey?: string;
-                onClose?: () => void;
-              }>;
-
-              // BADGES ANNOUNCEMENT (pink) – new feature announcement, first priority
-              items.push({
-                id: "badges-announcement",
-                variant: "brand-pink",
-                icon: <Award className="h-4 w-4" />,
-                title: "NEW: Creator Badges",
-                description: "Track your progress and earn badges.",
-                href: isLoggedIn ? "/badges" : undefined,
-                onClick: !isLoggedIn
-                  ? () => setLoginModalOpen(true)
-                  : undefined,
-                permanentHideKey: "badges_announcement_dismissed",
-                onClose: () => {
-                  // Handle dismissal - this triggers CalloutCarousel's handleDismiss which handles server-side persistence
-                },
-              });
-
-              return items;
-            })()}
-          />
-        </div>
 
         {/* Simplified Stat Cards */}
         <div className="grid grid-cols-2 gap-4 mt-4">
@@ -232,12 +176,6 @@ function RewardsContent() {
           // Keep modal open; refresh callout state immediately
           refreshPerkStatus();
         }}
-      />
-
-      {/* Login Modal for logged-out users */}
-      <FarcasterAccessModal
-        open={loginModalOpen}
-        onOpenChange={setLoginModalOpen}
       />
 
       {/* Rewards info functionality removed - page is now read-only */}
@@ -351,6 +289,10 @@ function RewardsContent() {
                     badge: isOptedIn ? (
                       <div className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-blue-light">
                         <HandCoins className="h-3 w-3 text-brand-blue" />
+                      </div>
+                    ) : isOptedOut ? (
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-green-light">
+                        <HandHeart className="h-3 w-3 text-brand-green" />
                       </div>
                     ) : undefined,
                   };
