@@ -1,389 +1,382 @@
-import type { LeaderboardResponse } from "@/lib/types";
-import { PROJECT_ACCOUNTS_TO_EXCLUDE } from "@/lib/constants";
+import "server-only";
 import { unstable_cache } from "next/cache";
 import { CACHE_KEYS, CACHE_DURATION_1_HOUR } from "@/lib/cache-keys";
-import { LeaderboardSnapshotService } from "./leaderboardSnapshotService";
+import { supabase } from "@/lib/supabase-client";
+import { getEthUsdcPrice, convertEthToUsdc } from "@/lib/utils";
+import {
+  BasecampProfile,
+  BasecampStats,
+  SortColumn,
+  SortOrder,
+  BasecampTab,
+} from "@/lib/types/basecamp";
 
-type Profile = {
-  id: string;
-  display_name?: string;
-  name?: string;
-  image_url?: string;
-  scores?: Array<{
-    slug: string;
-    points?: number;
-  }>;
-};
+// Get latest calculation date
+async function getLatestCalculationDate(): Promise<string> {
+  const { data, error } = await supabase
+    .from("base200_leaderboard")
+    .select("calculation_date")
+    .order("calculation_date", { ascending: false })
+    .limit(1);
 
-/**
- * NEW IMPLEMENTATION: Get leaderboard entries using snapshot UUIDs
- * This approach queries Talent API for specific UUIDs from our frozen snapshot
- * instead of getting current top 200 by Creator Score
- */
-export async function getTop200LeaderboardEntries(): Promise<LeaderboardResponse> {
-  const apiKey = process.env.TALENT_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing Talent API key");
+  if (error || !data?.length) {
+    throw new Error("No calculation data available");
   }
 
-  // Step 1: Get snapshot data (frozen ranks and rewards)
-  const snapshotExists = await LeaderboardSnapshotService.snapshotExists();
-  if (!snapshotExists) {
-    return { entries: [] };
-  }
+  return data[0].calculation_date;
+}
 
-  const snapshots = await LeaderboardSnapshotService.getSnapshot();
-  if (!snapshots || snapshots.length === 0) {
-    return { entries: [] };
-  }
+// Get previous calculation date for delta calculations
+async function getPreviousCalculationDate(
+  currentDate: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("base200_leaderboard")
+    .select("calculation_date")
+    .lt("calculation_date", currentDate)
+    .order("calculation_date", { ascending: false })
+    .limit(1);
 
-  // Step 2: Extract UUIDs from snapshot
-  const snapshotUUIDs = snapshots.map((s) => s.talent_uuid);
+  if (error || !data?.length) return null;
+  return data[0].calculation_date;
+}
 
-  // Step 3: Query Talent API for specific profiles by UUID
-  const profiles = await unstable_cache(
+// Get leaderboard with pagination and sorting
+export async function getBasecampLeaderboard(
+  offset: number = 0,
+  limit: number = 50,
+  sortBy: SortColumn = "creator_score",
+  sortOrder: SortOrder = "desc",
+  tab: BasecampTab = "creator",
+): Promise<{ profiles: BasecampProfile[]; total: number; hasMore: boolean }> {
+  return unstable_cache(
     async () => {
-      const baseUrl = "https://api.talentprotocol.com/search/advanced/profiles";
-      const batchSize = 50; // Process in smaller batches
-      const allProfiles: Profile[] = [];
+      const latestDate = await getLatestCalculationDate();
 
-      // Process UUIDs in batches
-      for (let i = 0; i < snapshotUUIDs.length; i += batchSize) {
-        const batch = snapshotUUIDs.slice(i, i + batchSize);
+      // For builder tab sorting by builder metrics, we need to handle sorting differently
+      const isBuilderMetricSort =
+        sortBy === "rewards_amount" || sortBy === "smart_contracts_deployed";
 
-        const data = {
-          query: {
-            profileIds: batch,
-            exactMatch: true,
-          },
-          sort: {
-            id: { order: "desc" },
-          },
-          per_page: batchSize,
-          view: "scores_minimal",
-        };
+      // Build query with filters
+      let query = supabase
+        .from("base200_leaderboard")
+        .select("*", { count: "exact" })
+        .eq("calculation_date", latestDate)
+        .not("display_name", "is", null);
 
-        const queryString = [
-          `query=${encodeURIComponent(JSON.stringify(data.query))}`,
-          `sort=${encodeURIComponent(JSON.stringify(data.sort))}`,
-          `per_page=${batchSize}`,
-          `view=scores_minimal`,
-        ].join("&");
+      // Add coin filtering for coins tab
+      if (tab === "coins") {
+        query = query.not("zora_creator_coin_address", "is", null);
+      }
 
-        const res = await fetch(`${baseUrl}?${queryString}`, {
-          headers: {
-            Accept: "application/json",
-            "X-API-KEY": apiKey,
-          },
-        });
+      // Only add sorting if it's not a builder metric sort
+      if (!isBuilderMetricSort) {
+        query = query
+          .order(sortBy, { ascending: sortOrder === "asc", nullsFirst: false })
+          .range(offset, offset + limit - 1);
+      } else {
+        // For builder metrics, fetch more data and sort later
+        query = query.order("creator_score", { ascending: false });
+      }
 
-        if (!res.ok) {
-          const errorText = await res.text();
-          throw new Error(
-            `Failed to fetch batch ${Math.floor(i / batchSize) + 1}: ${errorText}`,
+      const { data: currentData, error, count } = await query;
+      if (error) throw error;
+
+      // For coins tab, calculate holder deltas
+      let profiles = currentData || [];
+
+      if (tab === "coins" && currentData?.length) {
+        const previousDate = await getPreviousCalculationDate(latestDate);
+
+        if (previousDate) {
+          // Get previous day's holder counts for the same users
+          const talentUuids = currentData.map((p) => p.talent_uuid);
+
+          const { data: previousData } = await supabase
+            .from("base200_leaderboard")
+            .select("talent_uuid, zora_creator_coin_unique_holders")
+            .eq("calculation_date", previousDate)
+            .in("talent_uuid", talentUuids);
+
+          // Create lookup map for previous data
+          const previousHolders = new Map(
+            previousData?.map((p) => [
+              p.talent_uuid,
+              p.zora_creator_coin_unique_holders,
+            ]) || [],
           );
-        }
 
-        const json = await res.json();
-        const batchProfiles = json.profiles || [];
-        allProfiles.push(...batchProfiles);
+          // Calculate deltas and add to profiles
+          profiles = currentData.map((profile) => {
+            const currentHolders =
+              profile.zora_creator_coin_unique_holders || 0;
+            const prevHolders = previousHolders.get(profile.talent_uuid) || 0;
+            const holdersDelta = currentHolders - prevHolders;
 
-        // Rate limiting
-        if (i + batchSize < snapshotUUIDs.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
+            return {
+              ...profile,
+              zora_creator_coin_holders_24h_delta: holdersDelta,
+            };
+          });
+        } else {
+          // No previous data available, set all deltas to 0
+          profiles = currentData.map((profile) => ({
+            ...profile,
+            zora_creator_coin_holders_24h_delta: 0,
+          }));
         }
+      } else {
+        // No rank calculation needed for desktop tables
+        profiles = currentData || [];
       }
 
-      return allProfiles;
-    },
-    [CACHE_KEYS.LEADERBOARD + "-snapshot-profiles"],
-    {
-      revalidate: CACHE_DURATION_1_HOUR,
-      tags: [CACHE_KEYS.LEADERBOARD + "-snapshot-profiles"],
-    },
-  )();
+      // Add rewards and contracts data from database
+      // Following coding principles: Single query instead of N+1 lookups
+      const talentUuids = profiles.map((p) => p.talent_uuid);
 
-  // Step 4: Filter out project accounts
-  const filteredProfiles = profiles.filter(
-    (profile) => !PROJECT_ACCOUNTS_TO_EXCLUDE.includes(profile.id),
-  );
+      const { data: builderMetrics } = await supabase
+        .from("basecamp_builder_metrics")
+        .select("talent_uuid, smart_contracts_deployed, builder_rewards_eth")
+        .eq("calculation_date", "2025-09-13") // Use current date for builder metrics
+        .in("talent_uuid", talentUuids);
 
-  // Step 5: Opt-out status is now read directly from leaderboard_snapshots.opt_out
-  // No separate query needed - it's already in the snapshots data
+      // Get ETH price for conversion
+      const ethPrice = await getEthUsdcPrice();
 
-  // Step 6: Create snapshot map for quick lookup
-  const snapshotMap = new Map(
-    snapshots.map((snapshot) => [snapshot.talent_uuid, snapshot]),
-  );
-
-  // Step 7: Map profiles to leaderboard entries with snapshot data
-  const mapped = filteredProfiles.map((profile: Profile) => {
-    const creatorScores = Array.isArray(profile.scores)
-      ? profile.scores
-          .filter((s) => s.slug === "creator_score")
-          .map((s) => s.points ?? 0)
-      : [];
-    const score = creatorScores.length > 0 ? Math.max(...creatorScores) : 0;
-
-    // Get snapshot data for this profile
-    const snapshot = snapshotMap.get(profile.id);
-
-    // Use opt_out status from snapshot data
-    const isOptedOut = snapshot?.opt_out === true;
-    const isOptedIn = snapshot?.opt_out === false;
-    const isUndecided = snapshot?.opt_out === null; // NULL means no decision made
-
-    return {
-      name: profile.display_name || profile.name || "Unknown",
-      pfp: profile.image_url || undefined,
-      score,
-      id: profile.id,
-      talent_protocol_id: profile.id,
-      isBoosted: false,
-      isOptedOut,
-      isOptedIn,
-      isUndecided,
-      baseReward: snapshot?.rewards_amount || 0,
-      boostedReward: snapshot?.rewards_amount || 0,
-      rank: snapshot?.rank || -1, // Use snapshot rank, -1 if not found
-    };
-  });
-
-  // Step 8: Sort by snapshot rank to maintain frozen order
-  const sorted = mapped.sort((a, b) => {
-    if (a.rank === -1 && b.rank === -1) return 0;
-    if (a.rank === -1) return 1;
-    if (b.rank === -1) return -1;
-    return a.rank - b.rank;
-  });
-
-  return {
-    entries: sorted,
-  };
-}
-
-/**
- * Fetch top 200 entries from Talent Protocol API
- */
-export async function fetchTop200Entries(): Promise<Profile[]> {
-  const apiKey = process.env.TALENT_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing Talent API key");
-  }
-
-  const profiles = await unstable_cache(
-    async () => {
-      const baseUrl = "https://api.talentprotocol.com/search/advanced/profiles";
-      const batchSize = 200 + PROJECT_ACCOUNTS_TO_EXCLUDE.length;
-      const totalNeeded = 200 + PROJECT_ACCOUNTS_TO_EXCLUDE.length;
-      let allProfiles: Profile[] = [];
-
-      for (let page = 1; allProfiles.length < totalNeeded; page++) {
-        const data = {
-          query: {
-            score: {
-              min: 1,
-              scorer: "Creator Score",
-            },
-          },
-          sort: {
-            score: { order: "desc", scorer: "Creator Score" },
-            id: { order: "desc" },
-          },
-          page,
-          per_page: batchSize,
-        };
-
-        const queryString = [
-          `query=${encodeURIComponent(JSON.stringify(data.query))}`,
-          `sort=${encodeURIComponent(JSON.stringify(data.sort))}`,
-          `per_page=${batchSize}`,
-          `view=scores_minimal`,
-        ].join("&");
-
-        const res = await fetch(`${baseUrl}?${queryString}`, {
-          headers: {
-            Accept: "application/json",
-            "X-API-KEY": apiKey,
-          },
-        });
-
-        if (!res.ok) {
-          const errorText = await res.text();
-          throw new Error(`Failed to fetch page ${page}: ${errorText}`);
-        }
-
-        const json = await res.json();
-        const profiles = json.profiles || [];
-        allProfiles = [...allProfiles, ...profiles];
-
-        if (profiles.length < batchSize) break;
-
-        if (page < Math.ceil(totalNeeded / batchSize)) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-      }
-
-      return allProfiles.slice(0, totalNeeded);
-    },
-    [CACHE_KEYS.LEADERBOARD_TOP_200],
-    {
-      revalidate: CACHE_DURATION_1_HOUR,
-      tags: [CACHE_KEYS.LEADERBOARD_TOP_200],
-    },
-  )();
-
-  return profiles;
-}
-
-/**
- * Internal helper to execute a single search query
- */
-async function executeSearchQuery(
-  baseUrl: string,
-  searchQuery: Record<string, unknown>,
-  queryName: string,
-): Promise<string[]> {
-  const apiKey = process.env.TALENT_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing Talent API key");
-  }
-
-  const queryString = Object.keys(searchQuery)
-    .map(
-      (key) => `${key}=${encodeURIComponent(JSON.stringify(searchQuery[key]))}`,
-    )
-    .join("&");
-
-  const profileIds = await unstable_cache(
-    async () => {
-      const response = await fetch(
-        `${baseUrl}/search/advanced/profiles?${queryString}`,
-        {
-          headers: {
-            Accept: "application/json",
-            "X-API-KEY": apiKey,
-          },
-        },
+      // Create lookup map for builder metrics
+      const metricsMap = new Map(
+        builderMetrics?.map((m) => [m.talent_uuid, m]) || [],
       );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`${queryName} search failed: ${errorText}`);
+      // Merge builder metrics with profiles, converting ETH to USD
+      let profilesWithRewards = profiles.map((profile) => {
+        const metrics = metricsMap.get(profile.talent_uuid);
+        const ethRewards = metrics?.builder_rewards_eth || 0;
+        const usdRewards = convertEthToUsdc(ethRewards, ethPrice);
+        return {
+          ...profile,
+          rewards_amount: usdRewards,
+          smart_contracts_deployed: metrics?.smart_contracts_deployed || 0,
+        };
+      });
+
+      // Handle builder metric sorting
+      if (isBuilderMetricSort) {
+        // Sort by the builder metric
+        profilesWithRewards.sort((a, b) => {
+          const aValue =
+            sortBy === "rewards_amount"
+              ? a.rewards_amount
+              : a.smart_contracts_deployed;
+          const bValue =
+            sortBy === "rewards_amount"
+              ? b.rewards_amount
+              : b.smart_contracts_deployed;
+
+          if (sortOrder === "asc") {
+            return (aValue || 0) - (bValue || 0);
+          } else {
+            return (bValue || 0) - (aValue || 0);
+          }
+        });
+
+        // Apply pagination after sorting
+        const total = profilesWithRewards.length;
+        profilesWithRewards = profilesWithRewards.slice(offset, offset + limit);
+
+        return {
+          profiles: profilesWithRewards,
+          total,
+          hasMore: offset + limit < total,
+        };
       }
 
-      const data = await response.json();
-      const profileIds =
-        data.profiles?.map((profile: { id: string }) => profile.id) || [];
-
-      return profileIds;
+      return {
+        profiles: profilesWithRewards,
+        total: count || 0,
+        hasMore: offset + limit < (count || 0),
+      };
     },
-    [`${CACHE_KEYS.BOOSTED_PROFILES}-${queryName}-${queryString}`],
-    { revalidate: CACHE_DURATION_1_HOUR },
+    [
+      CACHE_KEYS.LEADERBOARD +
+        `-${tab}-${offset}-${limit}-${sortBy}-${sortOrder}`,
+    ],
+    {
+      revalidate: CACHE_DURATION_1_HOUR,
+      tags: [CACHE_KEYS.LEADERBOARD],
+    },
   )();
-
-  return profileIds;
 }
 
-/**
- * Internal helper to get boosted profiles from external API using OR logic
- * Returns profiles that have EITHER talent_protocol_talent_holder ≥ 100 OR talent_vault ≥ 100
- */
-async function getBoostedProfilesViaSearch(): Promise<string[]> {
-  const apiKey = process.env.TALENT_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing Talent API key");
-  }
-
-  const baseUrl = "https://api.talentprotocol.com";
-  const boostedProfileIds = new Set<string>();
-
-  // Query 1: talent_protocol_talent_holder ≥ 100 (optimized for top 200)
-  const query1 = {
-    query: {
-      score: {
-        min: 120, // Optimized: focus on profiles likely to be in top 200
-        scorer: "Creator Score",
-      },
-      credentials: [
-        {
-          slug: "talent_protocol_talent_holder",
-          valueRange: { min: 100 }, // Changed to 100 for boosted profiles
-        },
-      ],
-    },
-    sort: {
-      score: { order: "desc", scorer: "Creator Score" },
-      id: { order: "desc" },
-    },
-    per_page: 200,
-  };
-
-  // Query 2: talent_vault ≥ 100 (optimized for top 200)
-  const query2 = {
-    query: {
-      score: {
-        min: 120, // Optimized: focus on profiles likely to be in top 200
-        scorer: "Creator Score",
-      },
-      credentials: [
-        {
-          slug: "talent_vault",
-          valueRange: { min: 100 }, // Changed to 100 for boosted profiles
-        },
-      ],
-    },
-    sort: {
-      score: { order: "desc", scorer: "Creator Score" },
-      id: { order: "desc" },
-    },
-    per_page: 200,
-  };
-
-  // Execute both queries in parallel and handle partial failures gracefully
-  const [results1, results2] = await Promise.allSettled([
-    executeSearchQuery(baseUrl, query1, "talent_protocol_talent_holder"),
-    executeSearchQuery(baseUrl, query2, "talent_vault"),
-  ]);
-
-  // Process results and deduplicate
-  if (results1.status === "fulfilled") {
-    results1.value.forEach((id) => boostedProfileIds.add(id));
-  }
-
-  if (results2.status === "fulfilled") {
-    results2.value.forEach((id) => boostedProfileIds.add(id));
-  }
-
-  const finalResults = Array.from(boostedProfileIds);
-  return finalResults;
-}
-
-/**
- * Service function to get boosted profiles - called by API route
- */
-export async function getBoostedProfilesData(): Promise<string[]> {
-  const boostedProfiles = await unstable_cache(
+// Get aggregated statistics
+export async function getBasecampStats(): Promise<BasecampStats> {
+  return unstable_cache(
     async () => {
-      return await getBoostedProfilesViaSearch();
+      const latestDate = await getLatestCalculationDate();
+      const previousDate = await getPreviousCalculationDate(latestDate);
+
+      // Get current data (all participants with creator coins only)
+      const { data: currentData, error: currentError } = await supabase
+        .from("base200_leaderboard")
+        .select("*")
+        .eq("calculation_date", latestDate)
+        .not("display_name", "is", null)
+        .not("zora_creator_coin_address", "is", null);
+
+      if (currentError) throw currentError;
+
+      // Get previous data for delta calculations
+      let previousData = null;
+      if (previousDate) {
+        const { data: prevData, error: prevError } = await supabase
+          .from("base200_leaderboard")
+          .select(
+            "talent_uuid, zora_creator_coin_address, zora_creator_coin_unique_holders",
+          )
+          .eq("calculation_date", previousDate)
+          .not("display_name", "is", null)
+          .not("zora_creator_coin_address", "is", null);
+
+        if (!prevError) previousData = prevData;
+      }
+
+      // Calculate new metrics
+      const newMetrics = calculateNewMetrics(currentData || [], previousData);
+
+      // Get existing metrics (builder rewards, contracts, etc.) in parallel
+      const [builderMetricsData] = await Promise.all([
+        supabase
+          .from("basecamp_builder_metrics")
+          .select("smart_contracts_deployed, builder_rewards_eth")
+          .eq("calculation_date", "2025-09-13"), // Use current date for builder metrics
+      ]);
+
+      if (builderMetricsData.error) throw builderMetricsData.error;
+
+      // Get ETH price for conversion
+      const ethPrice = await getEthUsdcPrice();
+
+      // Calculate builder metrics totals, converting ETH to USD
+      const builderStats = builderMetricsData.data?.reduce(
+        (acc, record) => {
+          const ethRewards = Number(record.builder_rewards_eth) || 0;
+          const usdRewards = convertEthToUsdc(ethRewards, ethPrice);
+          return {
+            totalBuilderRewards: acc.totalBuilderRewards + usdRewards,
+            totalContractsDeployed:
+              acc.totalContractsDeployed +
+              (record.smart_contracts_deployed || 0),
+          };
+        },
+        { totalBuilderRewards: 0, totalContractsDeployed: 0 },
+      ) || { totalBuilderRewards: 0, totalContractsDeployed: 0 };
+
+      return {
+        totalBuilderRewards: builderStats.totalBuilderRewards,
+        totalContractsDeployed: builderStats.totalContractsDeployed,
+        totalMarketCap: newMetrics.marketCapTotal,
+        totalCreatorEarnings:
+          currentData?.reduce((sum, p) => sum + (p.total_earnings || 0), 0) ||
+          0,
+        calculationDate: latestDate,
+        ...newMetrics,
+      };
     },
-    [CACHE_KEYS.BOOSTED_PROFILES],
-    { revalidate: CACHE_DURATION_1_HOUR, tags: [CACHE_KEYS.LEADERBOARD_BASIC] },
+    [CACHE_KEYS.LEADERBOARD + "-stats"],
+    {
+      revalidate: CACHE_DURATION_1_HOUR,
+      tags: [CACHE_KEYS.LEADERBOARD],
+    },
   )();
-
-  return boostedProfiles;
 }
 
-/**
- * Get boosted profiles via API route - called by hooks
- */
-export async function getBoostedProfiles(): Promise<string[]> {
-  const response = await fetch("/api/boosted-profiles");
+function calculateNewMetrics(
+  currentData: BasecampProfile[],
+  previousData:
+    | {
+        talent_uuid: string;
+        zora_creator_coin_address: string | null;
+        zora_creator_coin_unique_holders: number | null;
+      }[]
+    | null,
+) {
+  // Coins Launched Today: Count new zora_creator_coin_address
+  const previousCoinAddresses = new Set(
+    previousData?.map((p) => p.zora_creator_coin_address).filter(Boolean) || [],
+  );
+  const coinsLaunchedToday = currentData.filter(
+    (p) =>
+      p.zora_creator_coin_address &&
+      !previousCoinAddresses.has(p.zora_creator_coin_address),
+  ).length;
 
-  if (!response.ok) {
-    throw new Error("Failed to fetch boosted profiles");
-  }
+  // Market Cap Today: Sum of 24h market cap changes
+  const marketCapToday = currentData.reduce(
+    (sum, p) => sum + (p.zora_creator_coin_market_cap_24h || 0),
+    0,
+  );
 
-  const data = await response.json();
-  return data.profiles || [];
+  // Volume Today: Sum of 24h volume
+  const volumeToday = currentData.reduce(
+    (sum, p) => sum + (p.zora_creator_coin_24h_volume || 0),
+    0,
+  );
+
+  // Holders Change Today: Net change in unique holders
+  const previousHolders = new Map(
+    previousData?.map((p) => [
+      p.talent_uuid,
+      p.zora_creator_coin_unique_holders,
+    ]) || [],
+  );
+  const holdersChangeToday = currentData.reduce((sum, p) => {
+    const current = p.zora_creator_coin_unique_holders || 0;
+    const previous = previousHolders.get(p.talent_uuid) || 0;
+    return sum + (current - previous);
+  }, 0);
+
+  return {
+    coinsLaunchedToday,
+    coinsLaunchedTotal: currentData.length,
+    marketCapToday,
+    marketCapTotal: currentData.reduce(
+      (sum, p) => sum + (p.zora_creator_coin_market_cap || 0),
+      0,
+    ),
+    volumeToday,
+    volumeTotal: currentData.reduce(
+      (sum, p) => sum + (p.zora_creator_coin_total_volume || 0),
+      0,
+    ),
+    holdersChangeToday,
+    holdersTotal: currentData.reduce(
+      (sum, p) => sum + (p.zora_creator_coin_unique_holders || 0),
+      0,
+    ),
+  };
 }
+
+// Check if coins tab should be visible
+export async function hasCreatorCoins(): Promise<boolean> {
+  return unstable_cache(
+    async () => {
+      const latestDate = await getLatestCalculationDate();
+
+      const { count } = await supabase
+        .from("base200_leaderboard")
+        .select("talent_uuid", { count: "exact" })
+        .eq("calculation_date", latestDate)
+        .not("display_name", "is", null)
+        .not("zora_creator_coin_address", "is", null);
+
+      return (count || 0) > 0;
+    },
+    [CACHE_KEYS.LEADERBOARD + "-has-coins"],
+    {
+      revalidate: CACHE_DURATION_1_HOUR,
+      tags: [CACHE_KEYS.LEADERBOARD],
+    },
+  )();
+}
+
+// Note: getUserBasecampRank function removed - now using simple client-side ranking

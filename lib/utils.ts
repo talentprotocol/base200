@@ -88,7 +88,7 @@ export async function getEthUsdcPrice(): Promise<number> {
   } catch (error) {
     console.error("[getEthUsdcPrice] Failed to fetch ETH price:", error);
     // Return fallback price if fetch fails
-    return 4300;
+    return 3400;
   }
 }
 

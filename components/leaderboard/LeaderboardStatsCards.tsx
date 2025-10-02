@@ -5,15 +5,15 @@ import { DualMetricStatCard } from "@/components/common/DualMetricStatCard";
 import { formatCompactNumber, formatCurrency } from "@/lib/utils";
 import { BasecampStats } from "@/lib/types/basecamp";
 
-interface BasecampStatsCardsProps {
+interface LeaderboardStatsCardsProps {
   stats: BasecampStats | null;
   loading: boolean;
 }
 
-export function BasecampStatsCards({
+export function LeaderboardStatsCards({
   stats,
   loading,
-}: BasecampStatsCardsProps) {
+}: LeaderboardStatsCardsProps) {
   if (loading) {
     return (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

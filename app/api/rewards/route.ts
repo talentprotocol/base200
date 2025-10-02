@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTop200LeaderboardEntries } from "@/app/services/leaderboardService";
+import { getTop200LeaderboardEntries } from "@/app/services/scoreLeaderboardService";
 
 export const maxDuration = 60;
 

@@ -22,7 +22,7 @@ export function Header() {
   const { talentId } = usePrivyAuth({});
 
   const handleTitleClick = () => {
-    router.push("/basecamp");
+    router.push("/leaderboard");
   };
 
   const handleNavClick = (
@@ -151,10 +151,10 @@ export function Header() {
             }
           `}</style>
 
-                {/* Right: Settings */}
-                <div className="flex-1 flex items-center justify-end">
-                  <div className="px-4 md:max-w-xl md:w-full md:mx-auto md:flex md:justify-end md:items-center md:gap-2">
-                    <Link
+          {/* Right: Settings */}
+          <div className="flex-1 flex items-center justify-end">
+            <div className="px-4 md:max-w-xl md:w-full md:mx-auto md:flex md:justify-end md:items-center md:gap-2">
+              <Link
                 href={settingsItem.href}
                 onClick={(e) => handleNavClick(settingsItem, e)}
                 className="flex items-center justify-center h-10 w-10 -mr-2 group transition-colors"

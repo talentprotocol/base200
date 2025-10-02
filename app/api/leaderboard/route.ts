@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBasecampLeaderboard } from "@/app/services/basecampLeaderboardService";
+import { getBasecampLeaderboard } from "@/app/services/leaderboardService";
 import { SortColumn, SortOrder, BasecampTab } from "@/lib/types/basecamp";
 
 export async function GET(request: NextRequest) {
