@@ -52,7 +52,6 @@ export async function POST(
       add_permanently_hidden_id,
       remove_dismissed_id,
       remove_permanently_hidden_id,
-      rewards_decision,
     }: UserPreferencesUpdateRequest = await req.json();
 
     if (!talent_uuid) {
@@ -69,25 +68,12 @@ export async function POST(
       );
     }
 
-    // Validate rewards_decision field
-    if (rewards_decision !== undefined && rewards_decision !== null) {
-      if (rewards_decision !== "opted_in" && rewards_decision !== "opted_out") {
-        return NextResponse.json(
-          {
-            error: `Invalid rewards_decision value: ${rewards_decision}. Must be "opted_in", "opted_out", or null`,
-          },
-          { status: 400 },
-        );
-      }
-    }
-
     const result = await updateUserPreferencesAtomic({
       talent_uuid,
       add_dismissed_id,
       add_permanently_hidden_id,
       remove_dismissed_id,
       remove_permanently_hidden_id,
-      rewards_decision,
     });
 
     return NextResponse.json(result);

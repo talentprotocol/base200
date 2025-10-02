@@ -19,7 +19,7 @@ import {
 } from "@/lib/types/basecamp";
 import { formatCompactNumber, formatCurrency, cn } from "@/lib/utils";
 
-interface BasecampDataTableProps {
+interface LeaderboardDataTableProps {
   data: BasecampProfile[];
   sortColumn: SortColumn;
   sortOrder: SortOrder;
@@ -166,7 +166,7 @@ const COLUMN_CONFIGS = {
   ],
 };
 
-export function BasecampDataTable({
+export function LeaderboardDataTable({
   data,
   sortColumn,
   sortOrder,
@@ -174,7 +174,7 @@ export function BasecampDataTable({
   onRowClick,
   pinnedIndex,
   tab = "creator",
-}: BasecampDataTableProps) {
+}: LeaderboardDataTableProps) {
   const columns = COLUMN_CONFIGS[tab];
 
   // Helper function to render cell content based on column key

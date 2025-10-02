@@ -15,7 +15,8 @@ interface MyRewardsProps {
   isLoading?: boolean;
   rank?: number;
   onInfoClick?: () => void;
-  talentUuid?: string | null;
+  isOptedOut?: boolean;
+  isOptedIn?: boolean;
 }
 
 export function MyRewards({
@@ -26,13 +27,18 @@ export function MyRewards({
   isLoading = false,
   rank,
   onInfoClick,
-  // talentUuid no longer needed for static rewards page
+  isOptedOut = false,
+  isOptedIn = false,
 }: MyRewardsProps) {
   const isTop200 =
     rank !== undefined && (rank === -1 || (rank > 0 && rank <= 200));
 
-  // For rewards page, we don't need dynamic decision - it's read-only
-  const rewardsDecision = null; // Static behavior for historical rewards page
+  // Determine rewards decision based on props
+  const rewardsDecision = isOptedOut
+    ? "opted_out"
+    : isOptedIn
+      ? "opted_in"
+      : null;
 
   return (
     <div className="w-full bg-brand-purple-light rounded-lg">

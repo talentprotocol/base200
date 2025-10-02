@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBasecampStats } from "@/app/services/basecampLeaderboardService";
+import { getBasecampStats } from "@/app/services/leaderboardService";
 
 export async function GET() {
   try {

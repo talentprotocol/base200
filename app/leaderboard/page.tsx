@@ -1,98 +1,281 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+
+import { useEffect, Suspense } from "react";
 import { useMiniKit } from "@coinbase/onchainkit/minikit";
 import { getUserContext } from "@/lib/user-context";
 import { useFidToTalentUuid } from "@/hooks/useUserResolution";
+import { useLeaderboardData } from "@/hooks/useLeaderboardData";
+import { useLeaderboardStats } from "@/hooks/useLeaderboardStats";
+import { useMediaQuery } from "@/hooks/use-media-query";
+import { useRouter, useSearchParams } from "next/navigation";
 import { sdk } from "@farcaster/frame-sdk";
-import { useResolvedTalentProfile } from "@/hooks/useResolvedTalentProfile";
-import { useCreatorScoreLeaderboard } from "@/hooks/useCreatorScoreLeaderboard";
-import { formatCompactNumber, formatCurrency } from "@/lib/utils";
-import { CreatorList } from "@/components/common/CreatorList";
-import { Button } from "@/components/ui/button";
-import { Section } from "@/components/common/Section";
-import { PageContainer } from "@/components/common/PageContainer";
-import { CalloutCarousel } from "@/components/common/CalloutCarousel";
-import { Award } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
 
-import * as React from "react";
-import { useRouter } from "next/navigation";
-import { useUserCalloutPrefs } from "@/hooks/useUserCalloutPrefs";
-import { FarcasterAccessModal } from "@/components/modals/FarcasterAccessModal";
+import { PageContainer } from "@/components/common/PageContainer";
+import { Section } from "@/components/common/Section";
+import { CreatorList } from "@/components/common/CreatorList";
+import { LeaderboardDataTable } from "@/components/leaderboard/LeaderboardDataTable";
+import { LeaderboardStatsCards } from "@/components/leaderboard/LeaderboardStatsCards";
+import { TabNavigation } from "@/components/common/tabs-navigation";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Typography } from "@/components/ui/typography";
+
+import {
+  formatCompactNumber,
+  formatCurrency,
+  formatPageDate,
+} from "@/lib/utils";
+import { BasecampTab } from "@/lib/types/basecamp";
 
 function LeaderboardContent() {
   const { context } = useMiniKit();
   const user = getUserContext(context);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { talentUuid: userTalentUuid } = useFidToTalentUuid();
-  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const isDesktop = useMediaQuery("(min-width: 768px)");
 
-  // Use Creator Score leaderboard hook
-  const { profiles, pinnedUser, loading, error, hasMore, showMore } =
-    useCreatorScoreLeaderboard(userTalentUuid);
+  // Tab state management
+  const currentTab = (searchParams.get("tab") || "coins") as BasecampTab;
 
-  // Use hooks for data fetching - both auth paths
-  const { displayName: unifiedName, avatarUrl: unifiedAvatar } =
-    useResolvedTalentProfile();
+  // Note: Sort state is managed by the hook, we just need to track tab changes
 
-  // Combine data from both auth paths
-  const avatarUrl = unifiedAvatar ?? user?.pfpUrl;
-  const name = unifiedName ?? user?.displayName ?? user?.username;
+  // Data hooks
+  const { stats, loading: statsLoading } = useLeaderboardStats();
 
-  // Server-persisted callout preferences
   const {
-    permanentlyHiddenIds: permanentlyHiddenCalloutIds,
-    addPermanentlyHiddenId,
-  } = useUserCalloutPrefs(userTalentUuid ?? null);
+    profiles,
+    loading,
+    error,
+    hasMore,
+    sortColumn,
+    sortOrder,
+    isSorting,
+    offset,
+    showMore,
+    setSorting,
+  } = useLeaderboardData(userTalentUuid, currentTab);
 
   // Hide Farcaster Mini App splash screen when ready
   useEffect(() => {
-    sdk.actions.ready(); // Notifies Farcaster host to hide splash
+    sdk.actions.ready();
   }, []);
 
-  const isLoggedIn = !!(user || unifiedName);
+  const isLoggedIn = !!(user?.fid || userTalentUuid);
+
+  // Simple client-side pinned user logic
+  const pinnedUser =
+    isLoggedIn && userTalentUuid
+      ? profiles.find((profile) => profile.talent_uuid === userTalentUuid)
+      : null;
+  const pinnedUserRank = pinnedUser
+    ? offset +
+      profiles.findIndex((profile) => profile.talent_uuid === userTalentUuid) +
+      1
+    : null;
+
+  // Debug logging for user identification
+  if (process.env.NODE_ENV === "development") {
+    console.log("Leaderboard - User context:", {
+      fid: user?.fid,
+      userTalentUuid,
+      isLoggedIn,
+      pinnedUserUuid: pinnedUser?.talent_uuid,
+      pinnedUserName: pinnedUser?.display_name,
+      pinnedUserRank,
+      userFoundInResults: !!pinnedUser,
+    });
+  }
+
+  // Handle tab change with URL update
+  const handleTabChange = (tabId: string) => {
+    const newSearchParams = new URLSearchParams(searchParams);
+    if (tabId === "coins") {
+      newSearchParams.delete("tab"); // Default tab
+    } else {
+      newSearchParams.set("tab", tabId);
+    }
+    router.push(`/leaderboard?${newSearchParams.toString()}`);
+  };
+
+  // Handle row/item clicks
+  const handleItemClick = (profile: { talent_uuid?: string; id?: string }) => {
+    router.push(`/${profile.talent_uuid || profile.id}`);
+  };
+
+  // Define tabs - all 3 tabs are always visible
+  const tabs = [
+    { id: "coins", label: "Coins" },
+    { id: "creator", label: "Creators" },
+    { id: "builder", label: "Builders" },
+  ];
+
+  // Map data for mobile CreatorList based on current tab
+  const creatorListItems = profiles.map((profile, index) => {
+    let primaryMetric: string;
+    let secondaryMetric: string;
+
+    switch (currentTab) {
+      case "coins":
+        // Always show Volume 24h as primary metric (right side) and Market Cap as secondary (below name)
+        primaryMetric = profile.zora_creator_coin_24h_volume
+          ? formatCurrency(profile.zora_creator_coin_24h_volume)
+          : "0";
+        secondaryMetric = profile.zora_creator_coin_market_cap
+          ? `Market Cap: ${formatCurrency(profile.zora_creator_coin_market_cap)}`
+          : "Market Cap: N/A";
+        break;
+      case "creator":
+        primaryMetric = profile.creator_score
+          ? formatCompactNumber(profile.creator_score)
+          : "0";
+        secondaryMetric = profile.total_earnings
+          ? `Creator Earnings: ${formatCurrency(profile.total_earnings)}`
+          : "Creator Earnings: N/A";
+        break;
+      case "builder":
+        primaryMetric = profile.builder_score
+          ? formatCompactNumber(profile.builder_score)
+          : "0";
+        secondaryMetric = profile.rewards_amount
+          ? `Base Builder Rewards: ${formatCurrency(profile.rewards_amount)}`
+          : "Base Builder Rewards: $0";
+        break;
+      default:
+        primaryMetric = "0";
+        secondaryMetric = "N/A";
+    }
+
+    return {
+      id: profile.talent_uuid,
+      name: profile.display_name,
+      avatarUrl: profile.image_url || undefined,
+      rank: offset + index + 1, // Simple mobile rank based on current sort order
+      primaryMetric,
+      secondaryMetric,
+    };
+  });
+
+  // Add pinned user for mobile view only, and only if user is found in results
+  const finalCreatorItems = (() => {
+    if (pinnedUser && pinnedUserRank) {
+      let primaryMetric: string;
+      let secondaryMetric: string;
+
+      switch (currentTab) {
+        case "coins":
+          // Always show Volume 24h as primary metric (right side) and Market Cap as secondary (below name)
+          primaryMetric = pinnedUser.zora_creator_coin_24h_volume
+            ? formatCurrency(pinnedUser.zora_creator_coin_24h_volume)
+            : "0";
+          secondaryMetric = pinnedUser.zora_creator_coin_market_cap
+            ? `Market Cap: ${formatCurrency(pinnedUser.zora_creator_coin_market_cap)}`
+            : "Market Cap: N/A";
+          break;
+        case "creator":
+          primaryMetric = pinnedUser.creator_score
+            ? formatCompactNumber(pinnedUser.creator_score)
+            : "0";
+          secondaryMetric = pinnedUser.total_earnings
+            ? `Creator Earnings: ${formatCurrency(pinnedUser.total_earnings)}`
+            : "Creator Earnings: N/A";
+          break;
+        case "builder":
+          primaryMetric = pinnedUser.builder_score
+            ? formatCompactNumber(pinnedUser.builder_score)
+            : "0";
+          secondaryMetric = pinnedUser.rewards_amount
+            ? `Base Builder Rewards: ${formatCurrency(pinnedUser.rewards_amount)}`
+            : "Base Builder Rewards: $0";
+          break;
+        default:
+          primaryMetric = "0";
+          secondaryMetric = "N/A";
+      }
+
+      const pinnedItem = {
+        id: pinnedUser.talent_uuid,
+        name: pinnedUser.display_name,
+        avatarUrl: pinnedUser.image_url || undefined,
+        rank: pinnedUserRank, // Use simple client-calculated rank
+        primaryMetric,
+        secondaryMetric,
+      };
+
+      // Remove from main list if present and insert at correct position
+      const filteredItems = creatorListItems.filter(
+        (item) => item.id !== pinnedUser.talent_uuid,
+      );
+
+      // Insert pinned user at the top for mobile view
+      const insertIndex = 0;
+
+      // Insert the pinned user at the correct position
+      const result = [...filteredItems];
+      result.splice(insertIndex, 0, pinnedItem);
+
+      return result;
+    }
+    return creatorListItems;
+  })();
+
+  // Desktop uses raw profiles data without pinned user manipulation
 
   return (
-    <PageContainer>
-      {/* Header section */}
+    <PageContainer className={isDesktop ? "max-w-none px-6" : undefined}>
+      {/* Page Title Section */}
       <Section variant="header">
-        {/* Callout Carousel - visible to all users */}
-        <div className="mb-4">
-          <CalloutCarousel
-            permanentlyHiddenIds={permanentlyHiddenCalloutIds}
-            onPersistPermanentHide={(id) => addPermanentlyHiddenId(id)}
-            items={[
-              // BADGES ANNOUNCEMENT (pink) – new feature announcement
-              {
-                id: "badges-announcement",
-                variant: "brand-pink",
-                icon: <Award className="h-4 w-4" />,
-                title: "NEW: Creator Badges",
-                description: "Track your progress and earn badges.",
-                href: isLoggedIn ? "/badges" : undefined,
-                onClick: !isLoggedIn
-                  ? () => setLoginModalOpen(true)
-                  : undefined,
-                permanentHideKey: "badges_announcement_dismissed",
-                onClose: () => {
-                  // Handle dismissal
-                },
-              },
-            ]}
-          />
+        <div>
+          <Typography as="h1" size="2xl" weight="bold">
+            Builders & Creators
+          </Typography>
+          <Typography color="muted">{formatPageDate(new Date())}</Typography>
         </div>
       </Section>
 
-      {/* Login Modal for logged-out users */}
-      <FarcasterAccessModal
-        open={loginModalOpen}
-        onOpenChange={setLoginModalOpen}
-      />
+      {/* Stats Cards */}
+      <Section variant="content">
+        <LeaderboardStatsCards stats={stats} loading={statsLoading} />
+      </Section>
 
-      {/* Content section */}
+      {/* Welcome Banner */}
+      {/* <Section variant="content">
+        <CalloutCarousel
+          permanentlyHiddenIds={permanentlyHiddenCalloutIds}
+          onPersistPermanentHide={(id) => addPermanentlyHiddenId(id)}
+          items={[
+            {
+              id: "basecamp-welcome",
+              variant: "brand-blue",
+              icon: <Target className="h-4 w-4" />,
+              title: "Top Builders & Creators",
+              description:
+                "Explore 300+ Base builders and creators. Sort by coins, scores, or earnings.",
+              permanentHideKey: "basecamp_welcome_dismissed",
+              onClose: () => {
+                // Handle dismissal - persistence handled by CalloutCarousel
+              },
+            },
+          ]}
+        />
+      </Section> */}
+
+      {/* Tabs */}
+      <Section variant="full-width">
+        <TabNavigation
+          tabs={tabs}
+          activeTab={currentTab}
+          onTabChange={handleTabChange}
+          showCounts={false}
+        />
+      </Section>
+
+      {/* Leaderboard Section */}
       <Section variant="content" animate>
         {error && (
-          <div className="text-destructive text-sm px-2 mb-4">{error}</div>
+          <div className="text-destructive text-sm px-2 mb-4">
+            Failed to load leaderboard data. Please try again later.
+          </div>
         )}
 
         {loading && profiles.length === 0 && (
@@ -113,70 +296,67 @@ function LeaderboardContent() {
           </div>
         )}
 
-        {/* Column headings */}
-        {!loading && profiles.length > 0 && (
-          <div className="flex items-center gap-3 px-3 py-2">
-            <span className="w-6 text-[10px] uppercase tracking-wide text-muted-foreground">
-              Rank
-            </span>
-            <div className="w-8" />
-            <span className="flex-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-              Creator
-            </span>
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Score
-            </span>
+        {/* Desktop Table View */}
+        {isDesktop && !loading && profiles.length > 0 && (
+          <div className="relative">
+            {isSorting && (
+              <div className="absolute top-2 right-2 z-10">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-background/80 backdrop-blur-sm px-2 py-1 rounded">
+                  <div className="animate-spin h-3 w-3 border border-muted-foreground border-t-transparent rounded-full" />
+                  Sorting...
+                </div>
+              </div>
+            )}
+            <LeaderboardDataTable
+              data={profiles}
+              sortColumn={sortColumn}
+              sortOrder={sortOrder}
+              onSort={setSorting}
+              onRowClick={handleItemClick}
+              pinnedIndex={undefined}
+              tab={currentTab}
+            />
           </div>
         )}
 
-        {/* Leaderboard list */}
-        <CreatorList
-          items={(() => {
-            const baseItems = profiles.map((profile) => ({
-              id: profile.id,
-              name: profile.display_name || "Unknown",
-              avatarUrl: profile.image_url,
-              rank: profile.rank,
-              primaryMetric: formatCompactNumber(profile.score),
-              secondaryMetric: profile.total_earnings
-                ? `Total Earnings: ${formatCurrency(profile.total_earnings)}`
-                : "Total Earnings: N/A",
-            }));
+        {/* Mobile Card View */}
+        {!isDesktop && !loading && profiles.length > 0 && (
+          <>
+            {/* Column headings for mobile */}
+            <div className="flex items-center gap-3 px-3 py-2">
+              <span className="w-6 text-[10px] uppercase tracking-wide text-muted-foreground">
+                Rank
+              </span>
+              <div className="w-8" />
+              <span className="flex-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                Creator
+              </span>
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {currentTab === "coins"
+                  ? "Volume 24h"
+                  : currentTab === "creator"
+                    ? "Creator Score"
+                    : "Builder Score"}
+              </span>
+            </div>
 
-            // Add pinned user at the top if logged in and available
-            if (isLoggedIn && pinnedUser) {
-              const pinnedItem = {
-                id: pinnedUser.id,
-                name: name || pinnedUser.display_name || "You",
-                avatarUrl: avatarUrl || pinnedUser.image_url,
-                rank: pinnedUser.rank,
-                primaryMetric: formatCompactNumber(pinnedUser.score),
-                secondaryMetric: pinnedUser.total_earnings
-                  ? `Total Earnings: ${formatCurrency(pinnedUser.total_earnings)}`
-                  : "Total Earnings: N/A",
-              };
+            <CreatorList
+              items={finalCreatorItems}
+              onItemClick={handleItemClick}
+              loading={loading}
+              pinnedIndex={pinnedUser && pinnedUserRank ? 0 : undefined}
+            />
+          </>
+        )}
 
-              // Remove from base items if already present to avoid duplication
-              const filteredItems = baseItems.filter(
-                (item) => item.id !== pinnedUser.id,
-              );
-              return [pinnedItem, ...filteredItems];
-            }
-
-            return baseItems;
-          })()}
-          onItemClick={(item) => {
-            // Navigate to profile page
-            router.push(`/${item.id}`);
-          }}
-          loading={loading}
-          pinnedIndex={isLoggedIn && pinnedUser ? 0 : undefined}
-        />
-
-        {/* Show More button */}
-        {!loading && hasMore && (
+        {/* Show More Button */}
+        {!loading && hasMore && !isSorting && (
           <div className="flex justify-center mt-6">
-            <Button variant="ghost" onClick={showMore} disabled={loading}>
+            <Button
+              variant="ghost"
+              onClick={showMore}
+              disabled={loading || isSorting}
+            >
               Show More
             </Button>
           </div>

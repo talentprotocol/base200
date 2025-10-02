@@ -3,13 +3,13 @@
 import { useState, useEffect } from "react";
 import { BasecampStats } from "@/lib/types/basecamp";
 
-interface UseBasecampStatsReturn {
+interface UseLeaderboardStatsReturn {
   stats: BasecampStats | null;
   loading: boolean;
   error: string | null;
 }
 
-export function useBasecampStats(): UseBasecampStatsReturn {
+export function useLeaderboardStats(): UseLeaderboardStatsReturn {
   const [stats, setStats] = useState<BasecampStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +17,7 @@ export function useBasecampStats(): UseBasecampStatsReturn {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetch("/api/basecamp-stats");
+        const response = await fetch("/api/stats");
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
         }

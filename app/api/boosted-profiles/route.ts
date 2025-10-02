@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBoostedProfilesData } from "@/app/services/leaderboardService";
+import { getBoostedProfilesData } from "@/app/services/scoreLeaderboardService";
 import { createServerErrorResponse, logApiError } from "@/lib/api-utils";
 
 export async function GET() {

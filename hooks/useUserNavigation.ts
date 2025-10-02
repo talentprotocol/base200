@@ -23,9 +23,9 @@ export function useUserNavigation() {
 
   const navItems = [
     {
-      href: "/basecamp",
+      href: "/leaderboard",
       icon: Tent,
-      label: "Basecamp",
+      label: "Leaderboard",
     },
     {
       href: "/explore",

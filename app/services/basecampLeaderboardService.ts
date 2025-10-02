@@ -62,7 +62,6 @@ export async function getBasecampLeaderboard(
         .from("base200_leaderboard")
         .select("*", { count: "exact" })
         .eq("calculation_date", latestDate)
-        .eq("basecamp_002_participant", true)
         .not("display_name", "is", null);
 
       // Add coin filtering for coins tab
@@ -216,12 +215,11 @@ export async function getBasecampStats(): Promise<BasecampStats> {
       const latestDate = await getLatestCalculationDate();
       const previousDate = await getPreviousCalculationDate(latestDate);
 
-      // Get current data (basecamp participants with creator coins only)
+      // Get current data (all participants with creator coins only)
       const { data: currentData, error: currentError } = await supabase
         .from("base200_leaderboard")
         .select("*")
         .eq("calculation_date", latestDate)
-        .eq("basecamp_002_participant", true)
         .not("display_name", "is", null)
         .not("zora_creator_coin_address", "is", null);
 
@@ -236,7 +234,6 @@ export async function getBasecampStats(): Promise<BasecampStats> {
             "talent_uuid, zora_creator_coin_address, zora_creator_coin_unique_holders",
           )
           .eq("calculation_date", previousDate)
-          .eq("basecamp_002_participant", true)
           .not("display_name", "is", null)
           .not("zora_creator_coin_address", "is", null);
 
@@ -369,7 +366,6 @@ export async function hasCreatorCoins(): Promise<boolean> {
         .from("base200_leaderboard")
         .select("talent_uuid", { count: "exact" })
         .eq("calculation_date", latestDate)
-        .eq("basecamp_002_participant", true)
         .not("display_name", "is", null)
         .not("zora_creator_coin_address", "is", null);
 

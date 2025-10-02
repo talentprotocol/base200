@@ -107,32 +107,32 @@ export async function getTop200LeaderboardEntries(): Promise<LeaderboardResponse
     (profile) => !PROJECT_ACCOUNTS_TO_EXCLUDE.includes(profile.id),
   );
 
-  // Fetch opt-out status for all users (for display styling)
+  // Fetch opt-out status from leaderboard_snapshots (source of truth)
   let optedOutUserIds: string[] = [];
   let optedInUserIds: string[] = [];
   let undecidedUserIds: string[] = [];
   try {
     const { data, error } = await supabase
-      .from("user_preferences")
-      .select("talent_uuid, rewards_decision");
+      .from("leaderboard_snapshots")
+      .select("talent_uuid, opt_out");
 
     if (error) {
-      console.error("Error fetching user preferences:", error);
+      console.error("Error fetching leaderboard snapshots:", error);
       optedOutUserIds = [];
       optedInUserIds = [];
       undecidedUserIds = [];
     } else {
       optedOutUserIds =
         data
-          ?.filter((row) => row.rewards_decision === "opted_out")
+          ?.filter((row) => row.opt_out === true)
           .map((row) => row.talent_uuid) ?? [];
       optedInUserIds =
         data
-          ?.filter((row) => row.rewards_decision === "opted_in")
+          ?.filter((row) => row.opt_out === false)
           .map((row) => row.talent_uuid) ?? [];
       undecidedUserIds =
         data
-          ?.filter((row) => row.rewards_decision === null)
+          ?.filter((row) => row.opt_out === null)
           .map((row) => row.talent_uuid) ?? [];
     }
   } catch {
@@ -151,7 +151,7 @@ export async function getTop200LeaderboardEntries(): Promise<LeaderboardResponse
     const score = creatorScores.length > 0 ? Math.max(...creatorScores) : 0;
     const isOptedOut = optedOutUserIds.includes(profile.id);
     const isOptedIn = optedInUserIds.includes(profile.id);
-    // Users with rewards_decision = null OR without a record in user_preferences are considered "undecided"
+    // Users with opt_out = null in leaderboard_snapshots are considered "undecided"
     const isUndecided =
       undecidedUserIds.includes(profile.id) ||
       (!optedOutUserIds.includes(profile.id) &&

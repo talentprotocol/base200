@@ -34,7 +34,14 @@ export async function GET(req: NextRequest) {
     // Get pinned user data if talentUuid is provided
     let pinnedUser = null;
     if (talentUuid) {
+      console.log(
+        "🔍 API Debug: Fetching pinned user for talentUuid:",
+        talentUuid,
+      );
       pinnedUser = await getUserProfileData(talentUuid);
+      console.log("🔍 API Debug: Pinned user result:", pinnedUser);
+    } else {
+      console.log("🔍 API Debug: No talentUuid provided, skipping pinned user");
     }
 
     const response = {

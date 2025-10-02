@@ -25,7 +25,7 @@ interface UseBasecampLeaderboardReturn {
 
 const PROFILES_PER_PAGE = 200;
 
-export function useBasecampLeaderboard(
+export function useLeaderboardData(
   talentUuid?: string | null,
   tab: BasecampTab = "creator",
 ): UseBasecampLeaderboardReturn {
@@ -92,9 +92,7 @@ export function useBasecampLeaderboard(
 
         // No longer need to pass talentUuid for server-side pinned user
 
-        const response = await fetch(
-          `/api/basecamp-leaderboard?${params.toString()}`,
-        );
+        const response = await fetch(`/api/leaderboard?${params.toString()}`);
 
         if (!response.ok) {
           throw new Error(`API error: ${response.status}`);
